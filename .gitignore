@@ -32,3 +32,4 @@ Intro_To_PyTorch/best_resnet101_head.pth
 
 # Chroma vector store - regenerate by re-running the embedding step
 5 - Enhance your SupportBot/chroma_db/
+6 - Evaluate GenAI/langfuse_key.env
