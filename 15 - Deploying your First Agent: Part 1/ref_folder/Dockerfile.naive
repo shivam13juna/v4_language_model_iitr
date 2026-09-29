@@ -1,0 +1,23 @@
+# The Dockerfile almost everybody writes first. It works. That is the problem — nothing
+# about it fails, so there is no pressure to fix any of it.
+#
+#   docker build -f Dockerfile.naive -t porter:naive .
+#
+# Four faults, and what each one costs, measured against the real Dockerfile next door:
+#
+#   1. `FROM python:3.12` is the full image — a compiler, git, and the whole of Debian.
+#   2. `COPY . .` before `pip install` puts the source in a layer *underneath* the
+#      dependencies, so editing one line of agent.py reinstalls LangChain.
+#   3. Copying everything also copies the 34 MB database, the notebook, every .sqlite
+#      file lying around — and a .env with a secret in it, if there is one. The
+#      .dockerignore next door exists to stop this.
+#   4. It runs as root, and it has no health check, so nothing — not `docker ps`, not a
+#      `depends_on`, not an orchestrator — can tell a process that is up from one that works.
+
+FROM python:3.12
+
+WORKDIR /app
+COPY . .
+RUN pip install -r requirements.txt
+
+CMD ["uvicorn", "porter.api:app", "--host", "0.0.0.0", "--port", "8080"]

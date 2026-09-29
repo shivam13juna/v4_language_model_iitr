@@ -1,0 +1,10 @@
+.env
+*.sqlite
+*.sqlite-*
+__pycache__/
+.pytest_cache/
+.ipynb_checkpoints/
+data/online_retail.zip
+deploy/aws/.state
+.env.prod
+.scratch/

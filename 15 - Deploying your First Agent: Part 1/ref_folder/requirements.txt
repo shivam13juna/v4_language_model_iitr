@@ -1,0 +1,26 @@
+# What the service needs to run — and nothing else, because every line here is in the image.
+# Pinned, because "it worked on my laptop last Tuesday" is not a deployment strategy.
+fastapi==0.139.0
+uvicorn[standard]==0.41.0
+pydantic==2.12.5
+pydantic-settings==2.13.1
+PyJWT==2.11.0
+
+langchain==1.2.10
+langchain-openai==1.1.10
+langgraph==1.0.10
+langgraph-checkpoint-sqlite==3.1.0
+aiosqlite==0.22.1
+langgraph-checkpoint-postgres==3.1.2
+psycopg[binary]==3.3.5
+
+httpx==0.28.1
+openai==2.30.0
+
+# Metrics and traces. Imported at module scope, so a container without them does not start.
+prometheus-client==0.25.0
+opentelemetry-api==1.43.0
+opentelemetry-sdk==1.43.0
+opentelemetry-exporter-otlp==1.43.0
+arize-phoenix-otel==0.16.1
+openinference-instrumentation-langchain==0.1.76

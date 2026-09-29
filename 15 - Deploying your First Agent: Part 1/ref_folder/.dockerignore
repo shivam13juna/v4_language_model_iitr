@@ -1,0 +1,35 @@
+# Everything with no business inside the image. Without this file the build context carries
+# the 34 MB database, every .sqlite written at runtime, the notebooks and the archive.
+**/__pycache__
+**/*.pyc
+**/.pytest_cache
+**/.ipynb_checkpoints
+*.ipynb
+*_build_nb.py
+archive/
+
+# Data is mounted at run time, never baked in. An image with the orders inside it is an
+# image you have to rebuild to fix a typo in a product description.
+online_retail.db
+data/
+*.sqlite
+*.sqlite-*
+traffic.jsonl
+evals/
+results/
+.scratch/
+
+# Secrets arrive as environment at run time. A .env baked into a layer is in every copy of
+# the image, forever — deleting it in a later layer does not remove it from the earlier one.
+.env
+.git
+.venv
+
+deploy/
+observability/
+ngrok/
+# The READMEs at the top only — porter/prompts/*.md must stay in the image.
+/*.md
+
+# Screenshots for the README.
+docs/

@@ -1,0 +1,75 @@
+# Porter on this machine: the service, plus the one piece of infrastructure it cannot
+# supply itself.
+#
+#   cp .env.example .env          # once, then set PORTER_AUTH_SECRET and OPENAI_API_KEY
+#   docker compose up --build     # start it          → http://localhost:8080
+#   docker compose logs -f porter # watch it
+#   docker compose down           # stop it           (add -v to wipe conversations too)
+#
+# Where each thing lives, on this machine:
+#   the agent service   this container
+#   the model           OpenAI's API (PORTER_PROVIDER=openai, the default), or Ollama on the
+#                       host (PORTER_PROVIDER=ollama), reached as host.docker.internal:11434
+#   business data       ./online_retail.db, mounted read-only
+#   conversations       the postgres container, on the porter-pgdata volume
+#   ledger              the porter-state volume, at /state
+
+services:
+  porter:
+    build:
+      context: .
+      args:
+        PORTER_VERSION: ${PORTER_VERSION:-dev}
+    image: porter:${PORTER_VERSION:-dev}
+    ports:
+      - "8080:8080"
+    environment:
+      # The model, as .env sets it (see .env.example). The OpenAI key arrives here at run
+      # time and is never in the image.
+      PORTER_PROVIDER: ${PORTER_PROVIDER:-openai}
+      PORTER_MODEL: ${PORTER_MODEL:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      # For PORTER_PROVIDER=ollama. Inside a container, 127.0.0.1 is the container itself; the
+      # host's Ollama is host.docker.internal (built in on Docker Desktop, extra_hosts on Linux).
+      PORTER_OLLAMA_URL: http://host.docker.internal:11434/v1
+      # Only for Ollama on another machine, through its tunnel: the tunnel's URL and token.
+      PORTER_BASE_URL: ${PORTER_BASE_URL:-}
+      PORTER_API_KEY: ${PORTER_API_KEY:-}
+      PORTER_POSTGRES_DSN: postgresql://porter:porter@postgres:5432/porter?sslmode=disable
+      # A secret arrives at run time, from the environment — never from the image. Compose
+      # refuses to start without it rather than falling back to something guessable.
+      PORTER_AUTH_SECRET: ${PORTER_AUTH_SECRET:?set PORTER_AUTH_SECRET in .env (see .env.example)}
+      PORTER_DEV_LOGIN: ${PORTER_DEV_LOGIN:-false}
+      PORTER_LOG_LEVEL: info
+    volumes:
+      - ./online_retail.db:/data/online_retail.db:ro
+      - porter-state:/state
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      postgres:
+        # Without the condition, compose waits for the container to exist, not for
+        # Postgres to accept connections — and the app loses that race about half the time.
+        condition: service_healthy
+    # Restarts the container when the PROCESS exits. It does not act on the health check:
+    # an unhealthy container that is still running stays running, marked unhealthy.
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: porter
+      POSTGRES_PASSWORD: porter
+      POSTGRES_DB: porter
+    volumes:
+      - porter-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U porter -d porter"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+volumes:
+  porter-state:
+  porter-pgdata:

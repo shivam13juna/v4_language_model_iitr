@@ -1,0 +1,49 @@
+# The edge, on the EC2 instance. Everything in here is something Python should not be doing.
+#
+# SITE_ADDRESS is a hostname that resolves to the instance. Without buying a domain,
+# <public-ip-with-dashes>.sslip.io does: 54-12-34-56.sslip.io resolves to 54.12.34.56, and
+# that is enough for Caddy to get a Let's Encrypt certificate on its own — and renew it on
+# its own. That is the entire TLS story, and it is the best argument for a proxy in front.
+# Set SITE_ADDRESS=:80 to run it without TLS.
+
+{
+	servers {
+		# A header the size of a novel is refused for the cost of a socket, not a worker.
+		max_header_size 16KB
+	}
+}
+
+{$SITE_ADDRESS::80} {
+	encode gzip
+
+	# --- things that stay inside -----------------------------------------------------------
+	# /metrics is for the scraper, not the internet. /dev is the laptop-only sign-in, which
+	# the app also refuses when PORTER_DEV_LOGIN is off; two locks on one door.
+	handle /metrics {
+		respond 404
+	}
+	handle /dev/* {
+		respond 404
+	}
+
+	# --- everything else -----------------------------------------------------------------------
+	handle {
+		reverse_proxy porter:8080 {
+			header_up X-Real-IP {remote_host}
+			health_uri /healthz
+			health_interval 10s
+		}
+	}
+
+	header {
+		-Server
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "same-origin"
+	}
+
+	log {
+		output stdout
+		format json
+	}
+}

@@ -1,0 +1,230 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Order help · Wickmere &amp; Rook</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Ccircle cx='32' cy='32' r='30' fill='%23145038' stroke='%23e2b45c' stroke-width='3'/%3E%3Ctext x='32' y='40' font-family='Georgia' font-size='22' fill='%23f3d38e' text-anchor='middle'%3EW%3C/text%3E%3C/svg%3E">
+<link rel="stylesheet" href="/web/desk.css">
+</head>
+<body>
+<header class="topbar"><div class="topbar-in" id="bar"></div></header>
+<main class="shell" id="app"></main>
+<footer class="foot" id="foot"></footer>
+<script src="/web/desk.js"></script>
+<script>
+// The order desk: a customer signs in, sees their orders, and asks Porter about them.
+// Porter answers once the whole run is done, so the page shows "typing" until the reply arrives.
+const KEY = 'porter-token';
+const TOOL_WORDS = {look_up_order: 'Looked up the order', price_order: 'Priced the order',
+                    start_return: 'Opened a return request'};
+const { el } = Desk;
+const app = document.getElementById('app');
+let token = Desk.store.get(KEY), me = null, threadId = null, orders = [], busy = false;
+let ordersBox, countLabel, logBox, suggestBox, input, sendButton;
+
+async function start() {
+  Desk.footer(document.getElementById('foot'),
+              'Answers come from your order history. This desk has no shipping or delivery information.');
+  if (token) {
+    const who = await Desk.api('/v1/me', {token});
+    if (who.ok && who.data.role === 'customer') { me = who.data; return openDesk(); }
+    Desk.store.drop(KEY);
+    token = '';
+  }
+  showSignIn();
+}
+
+function showSignIn(message) {
+  Desk.topbar(document.getElementById('bar'), {section: 'Order help', home: '/'});
+  Desk.signIn({role: 'customer', root: app, message, onSignedIn: (newToken, who) => {
+    token = newToken; me = who; threadId = null;
+    Desk.store.set(KEY, token);
+    openDesk();
+  }});
+}
+
+function signOut(message) {
+  Desk.store.drop(KEY);
+  token = ''; me = null; threadId = null; orders = [];
+  showSignIn(message);
+}
+
+// --- the desk: orders on the left, the conversation on the right ----------------------------
+function openDesk() {
+  const number = String(Math.round(me.customer_id));
+  Desk.topbar(document.getElementById('bar'), {section: 'Order help', home: '/',
+    who: {label: 'Customer ' + number, initials: number.slice(-2)}, onSignOut: () => signOut()});
+
+  countLabel = el('span', {class: 'count'});
+  ordersBox = el('div', {class: 'orders'});
+  logBox = el('div', {class: 'log', 'aria-live': 'polite'});
+  input = el('input', {type: 'text', maxlength: '2000', autocomplete: 'off', 'aria-label': 'Your question',
+                       placeholder: 'Ask about an order, e.g. "How much was my last order?"'});
+  sendButton = el('button', {class: 'btn send', 'aria-label': 'Send'});
+  sendButton.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>';
+
+  app.replaceChildren(el('div', {class: 'desk'},
+    el('section', {class: 'card', 'aria-label': 'Your orders'},
+      el('div', {class: 'panel-head'},
+        el('h2', {}, 'Your orders ', countLabel),
+        el('button', {class: 'btn link', type: 'button', text: 'Refresh', onclick: loadOrders})),
+      ordersBox),
+    el('section', {class: 'card chat', 'aria-label': 'Chat with Porter'},
+      el('div', {class: 'chat-head'},
+        el('span', {class: 'bot', text: 'P', 'aria-hidden': 'true'}),
+        el('div', {}, el('b', {text: 'Porter'}), el('span', {class: 'online', text: 'Order assistant'}))),
+      logBox,
+      el('form', {class: 'composer', onsubmit: e => { e.preventDefault(); ask(input.value); }}, input, sendButton))));
+
+  addPorter('Hello! I’m Porter. I can look up your orders, tell you what they cost, and open a return ' +
+            'request for you. What would you like to know?');
+  suggestBox = el('div', {class: 'suggest'});
+  logBox.append(suggestBox);
+  loadOrders().then(suggest);
+  input.focus();
+}
+
+// --- the order list -----------------------------------------------------------------------------
+async function loadOrders() {
+  const r = await Desk.api('/v1/orders', {token});
+  if (r.status === 401) return signOut('Your sign-in has expired. Please sign in again.');
+  if (!r.ok) { ordersBox.replaceChildren(el('p', {class: 'note', text: r.data.detail})); return; }
+  orders = r.data;
+  countLabel.textContent = '· ' + orders.length;
+  ordersBox.replaceChildren(...orders.map(orderCard));
+}
+
+function orderCard(order) {
+  const ret = order.return_request;
+  let badge = null;
+  if (order.cancelled) badge = el('span', {class: 'badge cancelled', text: 'Cancelled'});
+  else if (ret && ret.status === 'approved') badge = el('span', {class: 'badge approved', text: 'Refunded ' + Desk.money(ret.amount)});
+  else if (ret && ret.status === 'pending') badge = el('span', {class: 'badge pending', text: 'Return requested'});
+  else if (ret && ret.status === 'rejected') badge = el('span', {class: 'badge rejected', text: 'Return declined'});
+  const canReturn = !order.cancelled && !(ret && ['pending', 'approved'].includes(ret.status));
+  return el('article', {class: order.cancelled ? 'order cancelled' : 'order'},
+    el('div', {class: 'order-top'}, el('span', {class: 'order-no', text: 'Order ' + order.invoice_no}), badge),
+    el('div', {class: 'order-meta', text: `${Desk.day(order.placed_at)} · ${order.lines} ${order.lines === 1 ? 'product' : 'products'}`}),
+    el('div', {class: 'order-total', text: Desk.money(order.total)}),
+    el('div', {class: 'order-actions'},
+      el('button', {class: 'btn ghost small', type: 'button', text: 'Ask about it',
+                    onclick: () => ask(`Tell me about my order ${order.invoice_no}.`)}),
+      canReturn && el('button', {class: 'btn ghost small', type: 'button', text: 'Return it', onclick: () => {
+        input.value = `I'd like to return order ${order.invoice_no} because `;
+        input.focus();
+      }})));
+}
+
+// Three questions to start with, about this customer's own orders.
+function suggest() {
+  if (!suggestBox) return;
+  const open = orders.filter(o => !o.cancelled);
+  const returnable = open.filter(o => !(o.return_request && ['pending', 'approved'].includes(o.return_request.status)));
+  if (!open.length) { suggestBox.remove(); suggestBox = null; return; }
+  const latest = open[0].invoice_no, earlier = (open[1] || open[0]).invoice_no;
+  const questions = [`How much was order ${latest}?`, `When did I place order ${earlier}?`];
+  const toReturn = returnable[1] || returnable[0];
+  if (toReturn) questions.push(`Order ${toReturn.invoice_no} arrived damaged. I'd like to return it.`);
+  suggestBox.replaceChildren(...questions.map(q => el('button', {type: 'button', text: q, onclick: () => ask(q)})));
+}
+
+// --- the conversation ----------------------------------------------------------------------------
+async function ask(text) {
+  const question = (text || '').trim();
+  if (!question || busy) return;
+  busy = true; sendButton.disabled = true; input.value = '';
+  if (suggestBox) { suggestBox.remove(); suggestBox = null; }
+  const waitingBefore = new Set(orders.filter(o => o.return_request && o.return_request.status === 'pending')
+                                      .map(o => o.return_request.return_id));
+  addYou(question);
+  const typing = addTyping();
+
+  const r = await Desk.api('/v1/chat', {method: 'POST', token, body: {question, thread_id: threadId},
+                                        headers: {'Idempotency-Key': Desk.uuid()}});
+  typing.remove();
+  busy = false; sendButton.disabled = false; input.focus();
+
+  if (r.status === 401) return signOut('Your sign-in has expired. Please sign in again.');
+  if (r.status === 404 && r.data.error === 'thread_not_found') {
+    threadId = null;
+    return addPorter('That conversation has ended on our side. Ask again and I’ll start a new one.', {error: true});
+  }
+  if (!r.ok) return addPorter(r.data.detail || 'Something went wrong. Please try again.', {error: true});
+
+  threadId = r.data.thread_id;
+  const bubble = addPorter(r.data.reply, {answer: r.data});
+  if (r.data.tools_used.includes('start_return')) {
+    await loadOrders();
+    const opened = orders.filter(o => o.return_request && o.return_request.status === 'pending' &&
+                                      !waitingBefore.has(o.return_request.return_id));
+    for (const o of opened) {
+      bubble.append(el('div', {class: 'notice', text:
+        `Return request opened for order ${o.invoice_no} (${Desk.money(o.return_request.amount)}). ` +
+        'A colleague reviews it before anything is refunded; the order card shows where it stands.'}));
+    }
+  }
+}
+
+function addYou(text) {
+  logBox.append(el('div', {class: 'msg you'}, el('div', {class: 'bubble', text})));
+  logBox.scrollTop = logBox.scrollHeight;
+}
+
+function addTyping() {
+  const row = el('div', {class: 'msg porter', 'aria-label': 'Porter is checking'},
+    el('span', {class: 'bot', text: 'P', 'aria-hidden': 'true'}),
+    el('div', {class: 'bubble typing'}, el('i'), el('i'), el('i')));
+  logBox.append(row);
+  logBox.scrollTop = logBox.scrollHeight;
+  return row;
+}
+
+// Porter's reply, with the tools it used and, behind "details", what the answer cost.
+function addPorter(text, {answer, error} = {}) {
+  const body = el('div', {}, el('div', {class: 'bubble'}, format(text)));
+  if (answer) {
+    const under = el('div', {class: 'under'});
+    for (const name of new Set(answer.tools_used)) under.append(el('span', {class: 'tool', text: TOOL_WORDS[name] || name}));
+    const u = answer.usage;
+    const usage = el('div', {class: 'usage', hidden: true, text:
+      `${u.seconds}s · ${Desk.count(u.model_calls, 'model call')} · ${Desk.count(u.tool_calls, 'tool call')} · ${Desk.count(u.input_tokens + u.output_tokens, 'token')}`});
+    under.append(el('button', {class: 'btn link', type: 'button', text: 'details', onclick: () => { usage.hidden = !usage.hidden; }}));
+    body.append(under, usage);
+  }
+  logBox.append(el('div', {class: error ? 'msg porter error' : 'msg porter'},
+    el('span', {class: 'bot', text: 'P', 'aria-hidden': 'true'}), body));
+  logBox.scrollTop = logBox.scrollHeight;
+  return body;
+}
+
+// A reply as paragraphs and lists, with **bold** kept: built as elements, never as HTML.
+function format(text) {
+  const out = document.createDocumentFragment();
+  const inline = line => line.split(/(\*\*[^*]+\*\*)/).map(part =>
+    part.startsWith('**') && part.endsWith('**') && part.length > 4 ? el('strong', {text: part.slice(2, -2)}) : part);
+  for (const block of String(text).split(/\n\s*\n/)) {
+    const lines = block.split('\n').filter(l => l.trim());
+    if (!lines.length) continue;
+    const bulleted = lines.every(l => /^\s*([-*•]|\d+[.)])\s+/.test(l));
+    if (bulleted) {
+      const list = el(/^\s*\d/.test(lines[0]) ? 'ol' : 'ul');
+      for (const l of lines) list.append(el('li', {}, inline(l.replace(/^\s*([-*•]|\d+[.)])\s+/, ''))));
+      out.append(list);
+    } else {
+      const p = el('p');
+      lines.forEach((l, i) => { if (i) p.append(el('br')); p.append(...inline(l)); });
+      out.append(p);
+    }
+  }
+  return out;
+}
+
+// A decision made on the returns desk shows up here when you come back to this tab.
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible' && me && !busy) loadOrders();
+});
+start();
+</script>
+</body>
+</html>

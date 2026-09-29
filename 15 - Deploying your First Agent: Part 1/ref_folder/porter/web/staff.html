@@ -1,0 +1,162 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Returns desk · Wickmere &amp; Rook</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Ccircle cx='32' cy='32' r='30' fill='%23145038' stroke='%23e2b45c' stroke-width='3'/%3E%3Ctext x='32' y='40' font-family='Georgia' font-size='22' fill='%23f3d38e' text-anchor='middle'%3EW%3C/text%3E%3C/svg%3E">
+<link rel="stylesheet" href="/web/desk.css">
+</head>
+<body>
+<header class="topbar"><div class="topbar-in" id="bar"></div></header>
+<main class="shell" id="app"></main>
+<footer class="foot" id="foot"></footer>
+<script src="/web/desk.js"></script>
+<script>
+// The returns desk: a member of staff sees the return requests the agent opened and decides
+// each one. Approving pays the refund; the ledger makes a second approval pay nothing.
+const KEY = 'porter-staff-token';
+const LABEL = {pending: 'Waiting', approved: 'Refunded', rejected: 'Rejected'};
+const { el } = Desk;
+const app = document.getElementById('app');
+let token = Desk.store.get(KEY), me = null, requests = [], tab = 'pending', deciding = null, timer = null;
+let statsBox, tabsBox, listBox, updatedLabel;
+
+async function start() {
+  Desk.footer(document.getElementById('foot'),
+              'Every refund waits for a decision here. Approving the same request twice pays once.');
+  if (token) {
+    const who = await Desk.api('/v1/me', {token});
+    if (who.ok && who.data.role === 'staff') { me = who.data; return openDesk(); }
+    Desk.store.drop(KEY);
+    token = '';
+  }
+  showSignIn();
+}
+
+function showSignIn(message) {
+  clearInterval(timer);
+  Desk.topbar(document.getElementById('bar'), {section: 'Returns desk', home: '/staff'});
+  Desk.signIn({role: 'staff', root: app, message, onSignedIn: (newToken, who) => {
+    token = newToken; me = who;
+    Desk.store.set(KEY, token);
+    openDesk();
+  }});
+}
+
+function signOut(message) {
+  Desk.store.drop(KEY);
+  token = ''; me = null; requests = [];
+  showSignIn(message);
+}
+
+const staffName = subject => String(subject || '').replace(/^staff:/, '');
+
+// --- the desk: four numbers, a filter, and the requests -------------------------------------------
+function openDesk() {
+  const name = staffName(me.subject);
+  Desk.topbar(document.getElementById('bar'), {section: 'Returns desk', home: '/staff',
+    who: {label: 'Staff · ' + name, initials: name.slice(0, 1).toUpperCase()}, onSignOut: () => signOut()});
+  statsBox = el('div', {class: 'stats'});
+  tabsBox = el('div', {class: 'tabs', role: 'tablist', 'aria-label': 'Which requests'});
+  updatedLabel = el('span', {class: 'updated'});
+  listBox = el('div', {class: 'returns'});
+  app.replaceChildren(statsBox,
+    el('div', {class: 'toolbar'}, tabsBox, updatedLabel,
+      el('button', {class: 'btn ghost small', type: 'button', text: 'Refresh', onclick: load})),
+    listBox);
+  load();
+  clearInterval(timer);
+  // New requests arrive while the page is open: look again every 10 s, unless a decision is half-made.
+  timer = setInterval(() => { if (document.visibilityState === 'visible' && !deciding) load(); }, 10000);
+}
+
+async function load() {
+  const r = await Desk.api('/v1/returns', {token});
+  if (r.status === 401) return signOut('Your sign-in has expired. Please sign in again.');
+  if (r.status === 403) return signOut('That token is not a staff token.');
+  if (!r.ok) return Desk.toast(r.data.detail || 'Could not load the requests.', 'bad');
+  requests = r.data;
+  updatedLabel.textContent = 'Updated ' + new Date().toLocaleTimeString('en-GB', {hour: '2-digit', minute: '2-digit', second: '2-digit'});
+  render();
+}
+
+function render() {
+  const by = status => requests.filter(r => r.status === status);
+  const sum = rows => rows.reduce((total, r) => total + r.amount, 0);
+  const pending = by('pending'), approved = by('approved'), rejected = by('rejected');
+  statsBox.replaceChildren(
+    stat('pending', 'Waiting for a decision', pending.length, Desk.money(sum(pending)) + ' requested'),
+    stat('approved', 'Refunds paid', approved.length, Desk.money(sum(approved)) + ' refunded'),
+    stat('rejected', 'Rejected', rejected.length, 'no money moved'),
+    stat('', 'All requests', requests.length, 'opened by the agent'));
+
+  const counts = {pending: pending.length, approved: approved.length, rejected: rejected.length, all: requests.length};
+  tabsBox.replaceChildren(...[['pending', 'Waiting'], ['approved', 'Refunded'], ['rejected', 'Rejected'], ['all', 'All']]
+    .map(([key, label]) => el('button', {type: 'button', role: 'tab', 'aria-selected': String(tab === key),
+      onclick: () => { tab = key; render(); }}, label, el('span', {class: 'n', text: counts[key]}))));
+
+  // Waiting: oldest first, a queue. Everything else: newest first.
+  const shown = tab === 'all' ? requests.slice().reverse() : tab === 'pending' ? pending : by(tab).reverse();
+  if (!shown.length) {
+    listBox.replaceChildren(el('div', {class: 'card empty'},
+      el('b', {text: tab === 'pending' ? 'Nothing waiting' : 'No requests here yet'}),
+      tab === 'pending' ? 'When a customer asks Porter to return an order, the request appears here.' : ''));
+    return;
+  }
+  listBox.replaceChildren(...shown.map(card));
+}
+
+function stat(kind, label, number, note) {
+  return el('div', {class: 'card stat ' + kind}, el('small', {text: label}), el('b', {text: number}), el('span', {text: note}));
+}
+
+function card(r) {
+  const side = el('div', {class: 'ret-side'}, el('span', {class: 'badge ' + r.status, text: LABEL[r.status]}));
+  if (r.status === 'pending') side.append(actions(r));
+  else if (r.status === 'approved') side.append(el('div', {class: 'decided'}, 'Refund ' + (r.refund_id || ''), el('br'),
+    `paid ${Desk.when(r.paid_at || r.decided_at)} by ${staffName(r.decided_by)}`));
+  else side.append(el('div', {class: 'decided', text: `rejected ${Desk.when(r.decided_at)} by ${staffName(r.decided_by)}`}));
+  return el('article', {class: 'card ret'},
+    el('div', {class: 'ret-amount', text: Desk.money(r.amount)}),
+    el('div', {},
+      el('div', {class: 'ret-title', text: `Order ${r.invoice_no} · customer ${Math.round(r.customer_id)}`}),
+      el('div', {class: 'ret-meta', text: `${r.return_id} · requested ${Desk.when(r.requested_at)}`}),
+      r.reason ? el('div', {class: 'ret-reason', text: r.reason}) : null),
+    side);
+}
+
+// Approve or reject, each behind a second click that says exactly what will happen.
+function actions(r) {
+  const box = el('div', {class: 'ret-actions'});
+  const buttons = () => box.replaceChildren(
+    el('button', {class: 'btn small', type: 'button', text: 'Approve refund', onclick: () => confirm('approve')}),
+    el('button', {class: 'btn danger small', type: 'button', text: 'Reject', onclick: () => confirm('reject')}));
+  const confirm = kind => {
+    deciding = r.return_id;
+    const approving = kind === 'approve';
+    box.replaceChildren(el('div', {class: 'confirm'},
+      el('span', {text: approving ? `Pay ${Desk.money(r.amount)} to customer ${Math.round(r.customer_id)}?` : 'Reject this request?'}),
+      el('button', {class: approving ? 'btn small' : 'btn danger small', type: 'button',
+                    text: approving ? 'Yes, pay it' : 'Yes, reject', onclick: () => decide(r, kind)}),
+      el('button', {class: 'btn ghost small', type: 'button', text: 'Cancel', onclick: () => { deciding = null; buttons(); }})));
+  };
+  buttons();
+  return box;
+}
+
+async function decide(r, kind) {
+  const res = await Desk.api(`/v1/returns/${encodeURIComponent(r.return_id)}/${kind}`, {method: 'POST', token});
+  deciding = null;
+  if (res.status === 401) return signOut('Your sign-in has expired. Please sign in again.');
+  if (!res.ok) Desk.toast(res.data.detail || 'That did not go through.', 'bad');
+  else if (kind === 'reject') Desk.toast(`Request ${r.return_id} rejected. Nothing was paid.`);
+  else if (res.data.replayed) Desk.toast(`Already paid as ${res.data.refund_id}. Nothing was paid twice.`);
+  else Desk.toast(`Refund ${res.data.refund_id} paid: ${Desk.money(res.data.amount)} to customer ${Math.round(r.customer_id)}.`);
+  load();
+}
+
+start();
+</script>
+</body>
+</html>

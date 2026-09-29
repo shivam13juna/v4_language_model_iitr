@@ -1,0 +1,10 @@
+# The service's requirements, plus what the notebook, the tests and the data script use.
+-r requirements.txt
+
+pytest==9.0.2
+pandas==2.3.3                    # prepare_data.py
+openpyxl==3.1.5                  # prepare_data.py reads the UCI spreadsheet
+nbformat==5.10.4
+nbclient==0.11.0
+ipykernel==7.3.0
+ipython-autotime==0.3.2

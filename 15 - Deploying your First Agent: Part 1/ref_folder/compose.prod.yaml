@@ -1,0 +1,73 @@
+# Porter on the EC2 instance: the service, Postgres, and Caddy in front.
+#
+#   PORTER_TAG=2.0.0 docker compose -f compose.prod.yaml up -d --build    # deploy 2.0.0
+#   PORTER_TAG=1.9.0 docker compose -f compose.prod.yaml up -d porter     # roll back: the
+#                                                                        # old image is still here
+# Where each thing lives, on the instance:
+#   the agent service   the porter container, reachable only through Caddy
+#   the model           NOT here: OpenAI's API (the default), or this laptop's Ollama
+#                       through the ngrok tunnel — whichever .env names
+#   business data       ./online_retail.db, copied up once, mounted read-only
+#   conversations       the postgres container, on the pgdata volume — survives restarts
+#   ledger              the state volume at /state
+#   TLS                 Caddy, certificates on the caddy-data volume
+
+services:
+  porter:
+    build:
+      context: .
+      args:
+        PORTER_VERSION: ${PORTER_TAG:?set PORTER_TAG, e.g. PORTER_TAG=2.0.0}
+    image: porter:${PORTER_TAG}
+    # PORTER_AUTH_SECRET, and the model: PORTER_PROVIDER + OPENAI_API_KEY, or for Ollama
+    # PORTER_PROVIDER=ollama + PORTER_BASE_URL (the tunnel) + PORTER_API_KEY (its token)
+    env_file: .env
+    environment:
+      PORTER_POSTGRES_DSN: postgresql://porter:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@postgres:5432/porter?sslmode=disable
+      PORTER_DEV_LOGIN: "false"
+      PORTER_REQUEST_TIMEOUT_S: "150"     # the tunnel adds a hop; the budget still has to fit
+    volumes:
+      - ./online_retail.db:/data/online_retail.db:ro
+      - state:/state
+    expose:
+      - "8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: porter
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: porter
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U porter -d porter"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  caddy:
+    image: caddy:2.11.4-alpine
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      SITE_ADDRESS: ${SITE_ADDRESS:?set SITE_ADDRESS in .env, e.g. 54-12-34-56.sslip.io}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      - porter
+    restart: unless-stopped
+
+volumes:
+  state:
+  pgdata:
+  caddy-data:
+  caddy-config:

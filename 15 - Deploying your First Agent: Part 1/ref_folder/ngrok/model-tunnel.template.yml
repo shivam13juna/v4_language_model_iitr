@@ -1,0 +1,20 @@
+# Traffic policy for the tunnel in front of Ollama. Rendered by start_model_tunnel.sh with
+# the token filled in; the rendered copy never lands in the repo.
+#
+# Two rules, checked at ngrok's edge before a byte reaches this machine:
+#   1. only the OpenAI-compatible API. Ollama's own API can pull and DELETE models, and
+#      nothing on the internet has any business near /api/pull or /api/delete.
+#   2. only with the token. Without it the URL is a free GPU for whoever finds it.
+on_http_request:
+  - expressions:
+      - "!req.url.path.startsWith('/v1/')"
+    actions:
+      - type: deny
+        config:
+          status_code: 404
+  - expressions:
+      - "!('authorization' in req.headers) || !('Bearer ${PORTER_MODEL_TOKEN}' in req.headers['authorization'])"
+    actions:
+      - type: deny
+        config:
+          status_code: 401
