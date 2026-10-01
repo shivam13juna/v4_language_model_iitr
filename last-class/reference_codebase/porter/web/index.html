@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Order help · Wickmere &amp; Rook</title>
+<style>
+  :root { --bg:#f4efe6; --card:#fffdf8; --soft:#f9f4eb; --ink:#1b2420; --muted:#65706a; --line:#e6ddcf;
+          --brand:#1d6b50; --brand-soft:#e2f0e8; --bad:#b3261e; --bad-soft:#fbe6e3; color-scheme:light; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#0d1210; --card:#141b18; --soft:#1a231f; --ink:#e6ece8; --muted:#94a29b; --line:#27322d;
+            --brand:#3ba982; --brand-soft:#16271f; --bad:#f2786e; --bad-soft:#331b18; color-scheme:dark; }
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink); font:15px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif; }
+  button, input { font:inherit; color:inherit; }
+  header { background:linear-gradient(115deg,#113a2c,#1d6b50); color:#fff; padding:14px 20px; display:flex; align-items:baseline; gap:12px; }
+  header b { font:600 20px Georgia,serif; }
+  header span { font-size:12px; letter-spacing:.08em; text-transform:uppercase; opacity:.8; }
+  main { max-width:760px; margin:20px auto; padding:0 16px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:16px; display:flex; flex-direction:column;
+          height:calc(100vh - 150px); min-height:460px; box-shadow:0 10px 30px rgba(27,36,32,.07); }
+  .top { display:flex; align-items:center; gap:10px; padding:12px 16px; border-bottom:1px solid var(--line); }
+  .top label { margin-left:auto; color:var(--muted); font-size:13px; }
+  .top input { width:92px; margin-left:6px; padding:5px 8px; border:1px solid var(--line); border-radius:8px; background:var(--soft); }
+  #log { flex:1; overflow:auto; padding:16px; display:flex; flex-direction:column; gap:12px; }
+  .msg { max-width:85%; padding:10px 14px; border-radius:14px; background:var(--soft); border:1px solid var(--line); white-space:pre-wrap; }
+  .you { align-self:flex-end; background:var(--brand); color:#fff; border-color:transparent; }
+  .error { background:var(--bad-soft); color:var(--bad); border-color:transparent; }
+  .meta { margin-top:6px; font-size:12px; color:var(--muted); }
+  .tool { display:inline-block; margin-right:6px; padding:1px 9px; border-radius:999px; background:var(--brand-soft); color:var(--brand); font-weight:600; }
+  .chips { display:flex; flex-wrap:wrap; gap:8px; }
+  .chips button { padding:6px 12px; border:1px solid var(--line); border-radius:999px; background:var(--card); cursor:pointer; }
+  .chips button:hover { border-color:var(--brand); color:var(--brand); }
+  form { display:flex; gap:10px; padding:12px; border-top:1px solid var(--line); }
+  form input { flex:1; min-width:0; padding:11px 14px; border:1px solid var(--line); border-radius:12px; background:var(--soft); }
+  form button { padding:0 20px; border:0; border-radius:12px; background:var(--brand); color:#fff; font-weight:600; cursor:pointer; }
+  form button:disabled { opacity:.5; }
+  .foot { color:var(--muted); font-size:12.5px; }
+</style>
+</head>
+<body>
+<header><b>Wickmere &amp; Rook</b><span>Order help</span></header>
+<main>
+  <div class="card">
+    <div class="top"><span><b>Porter</b> · the order desk</span>
+      <label>Customer <input id="customer" type="number" value="12381"></label>
+    </div>
+    <div id="log">
+      <div class="msg">Hello, I'm Porter. Ask me about one of your orders: what it cost, when you placed it, or sending it back.</div>
+      <div class="chips" id="chips"></div>
+    </div>
+    <form id="form"><input id="question" maxlength="2000" autocomplete="off" placeholder="e.g. How much was order 580638?"><button>Send</button></form>
+  </div>
+  <p class="foot">Answers come from your order history. There is no shipping or delivery information.</p>
+</main>
+<script>
+// Each question goes to POST /v1/chat; the reply comes back with the tools used and the tokens.
+const log = document.getElementById('log'), form = document.getElementById('form');
+const question = document.getElementById('question'), send = form.querySelector('button');
+const TOOLS = {look_up_order: 'looked up the order', price_order: 'priced the order',
+               start_return: 'opened a return request'};
+// The conversation's thread_id: the first reply names it, and every later question sends it back,
+// so Porter sees what was said before. Reloading the page starts a new conversation.
+let thread = null;
+
+function add(text, kind) {                       // one message in the conversation; text, never HTML
+  const div = document.createElement('div');
+  div.className = 'msg ' + kind;
+  div.textContent = text;
+  log.append(div);
+  log.scrollTop = log.scrollHeight;
+  return div;
+}
+
+async function ask(text) {
+  if (!text.trim() || send.disabled) return;
+  document.getElementById('chips')?.remove();
+  add(text, 'you');
+  const waiting = add('…', '');
+  send.disabled = true;
+  question.value = '';
+  const started = performance.now();
+  try {
+    const r = await fetch('/v1/chat', {method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({question: text, customer_id: Number(document.getElementById('customer').value),
+                            thread_id: thread})});
+    const data = await r.json();
+    if (!r.ok) throw new Error(typeof data.detail === 'string' ? data.detail : 'HTTP ' + r.status);
+    thread = data.thread_id;
+    waiting.textContent = data.reply.replaceAll('**', '');
+    const meta = document.createElement('div');
+    meta.className = 'meta';
+    for (const name of new Set(data.tools_used)) {
+      const chip = document.createElement('span');
+      chip.className = 'tool';
+      chip.textContent = TOOLS[name] || name;
+      meta.append(chip);
+    }
+    const seconds = ((performance.now() - started) / 1000).toFixed(1);
+    meta.append(`${seconds} s · ${data.input_tokens + data.output_tokens} tokens`);
+    waiting.append(meta);
+  } catch (err) {
+    waiting.textContent = 'Sorry, that didn\'t work: ' + err.message;
+    waiting.classList.add('error');
+  }
+  send.disabled = false;
+  question.focus();
+}
+
+form.addEventListener('submit', e => { e.preventDefault(); ask(question.value); });
+for (const q of ['How much was order 580638?', 'When did I place order 574694?', 'Where is my order 570681?']) {
+  const b = document.createElement('button');
+  b.type = 'button';
+  b.textContent = q;
+  b.onclick = () => ask(q);
+  document.getElementById('chips').append(b);
+}
+</script>
+</body>
+</html>

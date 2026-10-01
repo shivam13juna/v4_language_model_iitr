@@ -1,0 +1,68 @@
+# Step 3 of 3: Porter, Postgres, Prometheus and Grafana. compose.app.yaml and compose.prometheus.yaml
+# are steps 1 and 2. This is the file a `docker compose` command reads when no -f is given, and the
+# one deploy/push.sh runs on the server.
+#
+#   docker compose up -d        porter, postgres and Prometheus as they were, plus Grafana   http://localhost:3000
+#   docker compose ps           what is running, at any step
+#   docker compose down         stop them all
+
+services:
+  porter:
+    build: .
+    image: porter:1.0
+    ports:
+      - "8080:8080"                    # this machine's port 8080 → the container's 8080
+    env_file: .env                     # OPENAI_API_KEY, handed over when the container starts
+    environment:
+      # Where conversations are kept. "postgres" is the service below: containers in one Compose
+      # project reach each other by service name.
+      PORTER_POSTGRES_DSN: postgresql://porter:porter@postgres:5432/porter
+    volumes:
+      - ./online_retail.db:/data/online_retail.db:ro   # the orders, read-only
+      - state:/state                   # the ledger: kept when the container is replaced
+    depends_on:
+      postgres:
+        condition: service_healthy     # start porter only once Postgres accepts connections
+    restart: unless-stopped            # started again if the process ever exits
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: porter
+      POSTGRES_PASSWORD: porter        # no port is published: only the containers here can reach it
+      POSTGRES_DB: porter
+    volumes:
+      - pgdata:/var/lib/postgresql/data   # the conversations: kept when the container is replaced
+    healthcheck:
+      test: ["CMD", "pg_isready", "-h", "127.0.0.1", "-U", "porter"]   # accepting connections yet?
+      interval: 2s
+      retries: 15
+    restart: unless-stopped
+
+  prometheus:
+    image: prom/prometheus:v3.15.0
+    ports:
+      - "127.0.0.1:9090:9090"          # this machine only
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+
+  grafana:
+    image: grafana/grafana:13.2.2
+    ports:
+      - "127.0.0.1:3000:3000"          # this machine only
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "true"    # no login page: whoever reaches it can look
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /etc/grafana/provisioning/dashboards/porter.json
+    volumes:
+      - ./grafana:/etc/grafana/provisioning:ro   # the data source and the dashboard
+
+# Named volumes: storage Docker keeps outside every container, so the ledger (return requests and
+# refunds) and the conversations survive a new container. Docker creates them on the first `up`;
+# only `docker compose down -v` deletes them.
+volumes:
+  state:
+    name: porter-state       # its name in `docker volume ls`
+    driver: local            # kept on this machine's disk, in Docker's own storage
+  pgdata:
+    name: porter-pgdata
+    driver: local

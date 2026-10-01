@@ -1,0 +1,8 @@
+# What Prometheus reads, and how often.
+global:
+  scrape_interval: 5s              # short, so traffic shows up within seconds
+
+scrape_configs:
+  - job_name: porter
+    static_configs:
+      - targets: ["porter:8080"]   # the service's name in compose.yaml; Prometheus reads its /metrics

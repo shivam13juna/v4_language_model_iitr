@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Returns desk · Wickmere &amp; Rook</title>
+<style>
+  :root { --bg:#f4efe6; --card:#fffdf8; --soft:#f9f4eb; --ink:#1b2420; --muted:#65706a; --line:#e6ddcf;
+          --brand:#1d6b50; --brand-soft:#e2f0e8; --warn:#9a6212; --warn-soft:#fbefd9; color-scheme:light; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#0d1210; --card:#141b18; --soft:#1a231f; --ink:#e6ece8; --muted:#94a29b; --line:#27322d;
+            --brand:#3ba982; --brand-soft:#16271f; --warn:#e6a64b; --warn-soft:#2c2213; color-scheme:dark; }
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink); font:15px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif; }
+  button, input { font:inherit; color:inherit; }
+  header { background:linear-gradient(115deg,#113a2c,#1d6b50); color:#fff; padding:14px 20px; display:flex; align-items:baseline; gap:12px; }
+  header b { font:600 20px Georgia,serif; }
+  header span { font-size:12px; letter-spacing:.08em; text-transform:uppercase; opacity:.8; }
+  header a { margin-left:auto; color:#fff; font-size:13px; }
+  main { max-width:900px; margin:20px auto; padding:0 16px; }
+  .bar { display:flex; align-items:center; gap:10px; margin-bottom:14px; color:var(--muted); font-size:13px; }
+  .bar input { width:120px; padding:5px 8px; border:1px solid var(--line); border-radius:8px; background:var(--card); }
+  .bar button { margin-left:auto; }
+  .ret { display:flex; align-items:center; gap:16px; padding:14px 16px; margin-bottom:10px; background:var(--card);
+         border:1px solid var(--line); border-radius:14px; }
+  .amount { font-size:20px; font-weight:700; min-width:96px; font-variant-numeric:tabular-nums; }
+  .what { flex:1; min-width:0; }
+  .what small { display:block; color:var(--muted); font-size:13px; }
+  .badge { padding:2px 10px; border-radius:999px; font-size:12px; font-weight:600; white-space:nowrap; }
+  .pending { background:var(--warn-soft); color:var(--warn); }
+  .approved { background:var(--brand-soft); color:var(--brand); }
+  button { padding:7px 14px; border:0; border-radius:10px; background:var(--brand); color:#fff; font-weight:600; cursor:pointer; }
+  button.ghost { background:none; color:var(--brand); border:1px solid var(--line); }
+  .empty { color:var(--muted); text-align:center; padding:40px; }
+</style>
+</head>
+<body>
+<header><b>Wickmere &amp; Rook</b><span>Returns desk</span><a href="/">the order desk</a></header>
+<main>
+  <div class="bar">
+    <label>Approving as <input id="staff" value="alice"></label>
+    <button class="ghost" id="refresh">Refresh</button>
+  </div>
+  <div id="list"></div>
+</main>
+<script>
+// The return requests the agent opened (GET /v1/returns), and a button that pays a pending one
+// (POST /v1/returns/{id}/approve). Pressing it twice pays once: the second answer says "replayed".
+const list = document.getElementById('list');
+
+function money(n) { return '£' + n.toFixed(2); }
+
+async function load() {
+  const rows = await (await fetch('/v1/returns')).json();
+  list.replaceChildren();
+  if (!rows.length) {
+    list.innerHTML = '<p class="empty">No return requests yet. Ask Porter to send an order back.</p>';
+    return;
+  }
+  for (const r of rows.reverse()) {                    // newest first
+    const row = document.createElement('div');
+    row.className = 'ret';
+    const amount = document.createElement('div');
+    amount.className = 'amount';
+    amount.textContent = money(r.amount);
+    const what = document.createElement('div');
+    what.className = 'what';
+    what.textContent = `${r.return_id} · order ${r.invoice_no} · customer ${Math.round(r.customer_id)}`;
+    const detail = document.createElement('small');
+    detail.textContent = r.status === 'approved'
+      ? `refund ${r.refund_id}, approved by ${r.decided_by}`
+      : `“${r.reason || ''}”`;
+    what.append(detail);
+    const badge = document.createElement('span');
+    badge.className = 'badge ' + r.status;
+    badge.textContent = r.status;
+    row.append(amount, what, badge);
+    if (r.status === 'pending') {
+      const button = document.createElement('button');
+      button.textContent = 'Approve';
+      button.onclick = () => approve(r.return_id, button);
+      row.append(button);
+    }
+    list.append(row);
+  }
+}
+
+async function approve(returnId, button) {
+  button.disabled = true;
+  const staff = encodeURIComponent(document.getElementById('staff').value || 'staff');
+  await fetch(`/v1/returns/${returnId}/approve?staff=${staff}`, {method: 'POST'});
+  load();
+}
+
+document.getElementById('refresh').onclick = load;
+load();
+</script>
+</body>
+</html>

@@ -1,0 +1,8 @@
+# Where Grafana gets its numbers: Prometheus, by its name in compose.yaml.
+apiVersion: 1
+datasources:
+  - name: Prometheus
+    type: prometheus
+    uid: prometheus
+    url: http://prometheus:9090
+    isDefault: true
