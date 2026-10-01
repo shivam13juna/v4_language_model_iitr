@@ -1,0 +1,7 @@
+# Load every dashboard file in this folder (porter.json) when Grafana starts.
+apiVersion: 1
+providers:
+  - name: porter
+    type: file
+    options:
+      path: /etc/grafana/provisioning/dashboards

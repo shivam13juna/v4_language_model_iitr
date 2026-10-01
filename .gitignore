@@ -17,6 +17,8 @@ venv/
 .venv/
 env/
 
+**/*.env
+
 # Large image dataset (not for version control)
 ML_Lec/CNN Hands On/New_landmark_images
 

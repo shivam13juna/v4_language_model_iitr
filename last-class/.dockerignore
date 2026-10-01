@@ -1,0 +1,6 @@
+# The build sees only what the Dockerfile copies. Everything else stays out: the 34 MB database,
+# .env and its key, the notebook, the deploy scripts.
+*
+!requirements.txt
+!porter/
+**/__pycache__

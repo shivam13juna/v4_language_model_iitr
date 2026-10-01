@@ -1,0 +1,16 @@
+# What the service needs, pinned: every package here is installed into the image. The langchain
+# and langgraph packages must match each other, so each one is pinned to versions tested together.
+fastapi==0.139.0
+uvicorn==0.41.0
+pydantic-settings==2.13.1
+langchain==1.2.10
+langchain-core==1.4.8
+langchain-openai==1.1.10
+langgraph==1.0.10
+langgraph-prebuilt==1.0.8
+langgraph-checkpoint==4.1.1
+langgraph-checkpoint-postgres==3.1.2
+psycopg[binary]==3.3.5
+openai==2.30.0
+prometheus-client==0.25.0
+

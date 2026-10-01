@@ -1,0 +1,5 @@
+.env
+deploy/.state
+porter_ledger.sqlite
+__pycache__/
+.ipynb_checkpoints/
